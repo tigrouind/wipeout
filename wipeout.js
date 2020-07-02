@@ -70,6 +70,7 @@ Wipeout.prototype.animate = function(time) {
 		var deltaTime = time - this.previousTime;
 		this.previousTime = time;
 
+		this.animateSceneObjects(time, this.splineCamera);
 		this.updateSplineCamera(time, deltaTime);
 			
 		this.rotateSpritesToCamera(this.splineCamera);
@@ -79,6 +80,7 @@ Wipeout.prototype.animate = function(time) {
 	// Default Orbit camera
 	else {
 		this.controls.update();
+		this.animateSceneObjects(time, this.camera);
 		this.rotateSpritesToCamera(this.camera);
 		this.renderer.render( this.scene, this.camera );
 	}
@@ -137,6 +139,44 @@ Wipeout.prototype.updateWeaponMaterial = function(time) {
 	var colorB = new THREE.Color(colors[(index+1)%colors.length]);
 	this.weaponTileMaterial.color = colorA.lerp(colorB, alpha).multiplyScalar(1.5);
 };
+
+Wipeout.prototype.animateSceneObjects = function(time, camera) {
+	this.scene.traverse (function (object)
+	{
+		if (object instanceof THREE.Mesh)
+		{
+			//sagarmatha, vostok island, spilskinanke
+			if(object.name.indexOf("AGunit") == 0) {
+				object.rotation.y = time * 0.0008;
+			}
+			//talon's reach
+			else if(object.name == "fan" || object.name == "fan2") {
+				object.rotation.z = time * -0.002;
+			}
+			//valparaiso
+			else if(object.name == "wfall") {
+				//get waterfall texture
+				var texture = object.material.materials[16].map;
+				texture.offset.setY((time * 0.001)%10); 
+				texture.wrapT = THREE.RepeatWrapping;
+			}
+			//phenitia park
+			else if(object.name == "dish_1") {
+				object.rotation.y = time * 0.003;
+			}
+			//gare d'europa
+			else if(object.name == "zeppelin") {
+				var t = (time * 0.00007)%1.0 - 0.3;
+				object.position.setZ(t * -21000.0);
+			}
+			else if(object.name.indexOf("camera") == 0) {
+				object.position.setY(Math.sin(time * 0.007) * 50.0);
+				object.parent.lookAt(camera.position);
+				
+			}
+		}
+	});
+}
 
 // ----------------------------------------------------------------------------
 // Wipeout Data Types
@@ -564,6 +604,7 @@ Wipeout.prototype.createModelFromObject = function(object, spriteCollection) {
 
 	if( geometry.faces.length ) {
 		var mesh = new THREE.Mesh(geometry, this.sceneMaterial);
+		mesh.name = object.header.name;
 		model.add(mesh);
 	}
 	return model;
