@@ -8,6 +8,9 @@ var Wipeout = function(containerId, width, height){
 	this.width = width;
 	this.height = height;
 
+	this.accumulator = 0;
+	this.fixedTime = 0;
+	this.previousTime = 0;
 	this.activeCameraMode = 'fly';
 
 	window.addEventListener('resize', this.resize.bind(this), true);
@@ -30,8 +33,6 @@ Wipeout.prototype.clear = function() {
 
 	// Add Camera for fly through
 	this.splineCamera = new THREE.PerspectiveCamera( 84, window.innerWidth / window.innerHeight, 64, 2048576 );
-	this.splineCamera.currentLookAt = new THREE.Vector3(0,0,0);
-	this.splineCamera.roll = 0;
 	this.splineCamera.rotation.order = 'YZX';
 
 	this.cameraSpline = null;
@@ -39,8 +40,13 @@ Wipeout.prototype.clear = function() {
 	this.trackMaterial = null;
 	this.weaponTileMaterial = null;
 	
-	this.startTime = Date.now();
-	this.ticks = 0;
+	this.state = {
+		position : this.splineCamera.position.clone(),
+		lookat : new THREE.Vector3(0,0,0),
+		roll : 0
+	};
+	this.previousState = {};
+	this.copyState(this.state, this.previousState);
 };
 
 Wipeout.prototype.resize = function() {
@@ -56,28 +62,35 @@ Wipeout.prototype.resize = function() {
 	this.renderer.setSize( window.innerWidth, window.innerHeight );
 }
 
-Wipeout.prototype.animate = function() {
+Wipeout.prototype.animate = function(time) {
 	requestAnimationFrame( this.animate.bind(this) );
-	var time = Date.now();
 	
 	// Update weapon tile color 
 	if(this.weaponTileMaterial) {
 		this.updateWeaponMaterial(time);
 	}
-
+	
 	// Camera is in fly mode and we have a spline to follow?
 	if( this.activeCameraMode === 'fly' && this.cameraSpline ) {
 	
-		var elapsedTime = time - this.startTime;
-		var elapsedTicks = elapsedTime / 1000 * 60;
+		var dt = 1000/60;
 
-		// Fixed time step loop (60hz)
-		while(this.ticks < elapsedTicks) {
+		var deltaTime = time - this.previousTime;
+		this.accumulator += deltaTime; 
+		this.previousTime = time;
 		
-			this.updateSplineCamera();
-			this.ticks++;
+		//fixed time step loop (60hz)
+		while(this.accumulator >= dt) {
+			this.copyState(this.state, this.previousState);
+			this.updateCameraState(this.fixedTime, this.state);
+			this.fixedTime += dt;
+			this.accumulator -= dt;
 		}
 		
+		var alpha = this.accumulator / dt;
+		var newState = this.lerpStates(this.previousState, this.state, alpha);
+		
+		this.updateCameraTransform(this.splineCamera, newState);
 		this.rotateSpritesToCamera(this.splineCamera);
 		this.renderer.render(this.scene, this.splineCamera);
 	}
@@ -90,40 +103,58 @@ Wipeout.prototype.animate = function() {
 	}
 };
 
-Wipeout.prototype.updateSplineCamera = function() {
+Wipeout.prototype.lerpStates = function(a, b, value)
+{
+	return {
+		position: a.position.clone().multiplyScalar(1-value).add(b.position.clone().multiplyScalar(value)),
+		lookat: a.lookat.clone().multiplyScalar(1-value).add(b.lookat.clone().multiplyScalar(value)),
+		roll: a.roll * (1-value) + b.roll * value
+	};
+}
+
+Wipeout.prototype.copyState = function(source, destination) {
+	destination.position = source.position.clone();
+	destination.lookat = source.lookat.clone();
+	destination.roll = source.roll;
+};
+
+Wipeout.prototype.updateCameraTransform = function(camera, state) {
+	camera.position.set(state.position.x, state.position.y, state.position.z);
+	camera.lookAt(state.lookat);
+	camera.up = (new THREE.Vector3(0,1,0)).applyAxisAngle(
+		state.position.clone().sub(state.lookat).normalize(),
+		state.roll * 0.25
+	);
+}
+
+Wipeout.prototype.updateCameraState = function(time, state) {
 	var damping = 0.90;
-	var time = this.ticks * 1000 / 60;
 
 	var loopTime = this.cameraSpline.points.length * 100;
 
 	// Camera position along the spline
 	var tmod = ( time % loopTime ) / loopTime;
 	var cameraPos = this.cameraSpline.getPointAt( tmod ).clone();
-	this.splineCamera.position.multiplyScalar(damping)
+	state.position.multiplyScalar(damping)
 		.add(cameraPos.clone().add({x:0, y:600, z:0}).multiplyScalar(1-damping));
 
 	// Camera lookAt along the spline
 	var tmodLookAt = ( (time+800) % loopTime ) / loopTime;
 	var lookAtPos = this.cameraSpline.getPointAt( tmodLookAt ).clone();
-	this.splineCamera.currentLookAt = this.splineCamera.currentLookAt.multiplyScalar(damping)
+	state.lookat = state.lookat.multiplyScalar(damping)
 		.add(lookAtPos.clone().multiplyScalar(1-damping));
-	this.splineCamera.lookAt(this.splineCamera.currentLookAt);
-
+	
 	// Roll into corners - there's probably an easier way to do this. This 
 	// takes the angle between the current camera position and the current
 	// lookAt, applies some damping and rolls the camera along its view vector
-	var cn = cameraPos.sub(this.splineCamera.position);
-	var tn = lookAtPos.sub(this.splineCamera.currentLookAt);
+	var cn = cameraPos.sub(state.position);
+	var tn = lookAtPos.sub(state.lookat);
 	var roll = (Math.atan2(cn.z, cn.x) - Math.atan2(tn.z, tn.x));
 	roll += (roll > Math.PI)
 		? -Math.PI*2 
 		: (roll < -Math.PI) ? Math.PI * 2 : 0;
 
-	this.splineCamera.roll = this.splineCamera.roll * 0.95 + (roll)*0.1;
-	this.splineCamera.up = (new THREE.Vector3(0,1,0)).applyAxisAngle(
-		this.splineCamera.position.clone().sub(this.splineCamera.currentLookAt).normalize(),
-		this.splineCamera.roll * 0.25
-	);
+	state.roll = state.roll * damping + (roll) * (1-damping);
 }
 
 
