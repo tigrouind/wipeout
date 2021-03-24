@@ -40,7 +40,15 @@ Wipeout.prototype.clear = function() {
 	this.trackMaterial = null;
 	this.weaponTileMaterial = null;
 	
-
+	var far = this.splineCamera.far;
+	this.splineCamera.far = 40000;
+	this.splineCamera.updateProjectionMatrix();
+	this.projectionMatrix = new THREE.Matrix4();
+	this.projectionMatrix.copy(this.splineCamera.projectionMatrix);	
+	this.splineCamera.far = far;
+	this.splineCamera.updateProjectionMatrix();
+	this.frustum = new THREE.Frustum();
+	this.matrix = new THREE.Matrix4();
 };
 
 Wipeout.prototype.resize = function() {
@@ -63,6 +71,15 @@ Wipeout.prototype.animate = function(time) {
 	if(this.weaponTileMaterial) {
 		this.updateWeaponMaterial(time);
 	}
+
+	this.frustum.setFromMatrix( this.matrix.multiplyMatrices( this.projectionMatrix, this.splineCamera.matrixWorldInverse ));
+
+	this.scene.traverse((node) => {
+		if ( node instanceof THREE.Mesh ) {
+			node.visible = this.activeCameraMode !== 'fly' || this.frustum.intersectsObject(node);
+			//node.visible = node.position.distanceTo(this.splineCamera.position) < 50000;
+		}
+	});
 
 	// Camera is in fly mode and we have a spline to follow?
 	if( this.activeCameraMode === 'fly' && this.cameraSpline ) {
@@ -848,20 +865,11 @@ Wipeout.prototype.createTrack = function(files) {
 		composedImages.push(composedImage);
 	}
 
-
 	this.trackMaterial = this.createMeshFaceMaterial(composedImages, THREE.FaceColors, THREE.DoubleSide);
-
-	var model = new THREE.Object3D();
-	var geometry = new THREE.Geometry();
-
 
 	// Load vertices
 	var vertexCount = files.vertices.byteLength / Wipeout.TrackVertex.byteLength;
 	var rawVertices = Wipeout.TrackVertex.readStructs(files.vertices, 0, vertexCount);
-
-	for( var i = 0; i < rawVertices.length; i++ ) {
-		geometry.vertices.push( new THREE.Vector3(rawVertices[i].x, -rawVertices[i].y, -rawVertices[i].z) );
-	}
 
 	// Load Faces
 	var faceCount = files.faces.byteLength / Wipeout.TrackFace.byteLength;
@@ -881,9 +889,44 @@ Wipeout.prototype.createTrack = function(files) {
 			f.flags = t.flags;
 		}
 	}
+	
+	//vertices
+	var vertices = [];
+	for( var i = 0; i < rawVertices.length; i++ ) {
+		vertices.push( new THREE.Vector3(rawVertices[i].x, -rawVertices[i].y, -rawVertices[i].z) );
+	}
 
-	for( var i = 0; i < faces.length; i++ ) {
+	//track sections
+	var sectionCount = files.sections.byteLength / Wipeout.TrackSection.byteLength;
+	var sections = Wipeout.TrackSection.readStructs(files.sections, 0, sectionCount);
+
+	var group = new THREE.Group();
+	for(var i = 0 ; i < sections.length ; i ++) {
+		
+		var geometry = this.createTrackSection(i, faces, vertices, sections);
+		var mesh = new THREE.Mesh(geometry, this.trackMaterial);
+		group.add(mesh);
+	}
+	this.scene.add(group);
+
+	this.createCameraSpline(sections, faces, vertices);
+};
+
+Wipeout.prototype.createTrackSection = function(index, faces, vertices, sections) {
+	var geometry = new THREE.Geometry();
+
+	var map = new Map();
+	var section = sections[index];
+	for(var i = section.firstFace; i < section.firstFace+section.numFaces; i++ ) {
 		var f = faces[i];
+
+		for(var k = 0 ; k < 4 ; k++) {
+			if(!map.has(f.indices[k])) {
+					var vert = vertices[f.indices[k]];
+				map.set(f.indices[k], geometry.vertices.length);
+				geometry.vertices.push(vert);
+			}
+		}
 
 		var color = this.int32ToColor( f.color );
 		var materialIndex = f.tile;
@@ -894,8 +937,8 @@ Wipeout.prototype.createTrack = function(files) {
 			color = new THREE.Color(0.25, 0.25, 2);
 		}
 		
-		geometry.faces.push( new THREE.Face3(f.indices[0], f.indices[1], f.indices[2], null, color, materialIndex) );
-		geometry.faces.push( new THREE.Face3(f.indices[2], f.indices[3], f.indices[0], null, color, materialIndex) );
+		geometry.faces.push( new THREE.Face3(map.get(f.indices[0]), map.get(f.indices[1]), map.get(f.indices[2]), null, color, materialIndex) );
+		geometry.faces.push( new THREE.Face3(map.get(f.indices[2]), map.get(f.indices[3]), map.get(f.indices[0]), null, color, materialIndex) );
 
 		var flipx = (f.flags & Wipeout.TrackFace.FLAGS.FLIP) ? 1: 0;
 		geometry.faceVertexUvs[0].push([
@@ -910,21 +953,14 @@ Wipeout.prototype.createTrack = function(files) {
 		]);
 	}
 
-	var mesh = new THREE.Mesh(geometry, this.trackMaterial);
-	model.add(mesh);
-	this.scene.add( model );
-
-
-	this.createCameraSpline(files.sections, faces, geometry.vertices);
+	return geometry;
 };
 
 
 // ----------------------------------------------------------------------------
 // Extract a camera from the track section file (.TRS)
 
-Wipeout.prototype.createCameraSpline = function(buffer, faces, vertices) {
-	var sectionCount = buffer.byteLength / Wipeout.TrackSection.byteLength;
-	var sections = Wipeout.TrackSection.readStructs(buffer, 0, sectionCount);
+Wipeout.prototype.createCameraSpline = function(sections, faces, vertices) {
 
 	var cameraPoints = [];
 	var jumpIndexes = [];
