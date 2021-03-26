@@ -40,13 +40,6 @@ Wipeout.prototype.clear = function() {
 	this.trackMaterial = null;
 	this.weaponTileMaterial = null;
 	
-	var far = this.splineCamera.far;
-	this.splineCamera.far = 40000;
-	this.splineCamera.updateProjectionMatrix();
-	this.projectionMatrix = new THREE.Matrix4();
-	this.projectionMatrix.copy(this.splineCamera.projectionMatrix);	
-	this.splineCamera.far = far;
-	this.splineCamera.updateProjectionMatrix();
 	this.frustum = new THREE.Frustum();
 	this.matrix = new THREE.Matrix4();
 };
@@ -72,14 +65,9 @@ Wipeout.prototype.animate = function(time) {
 		this.updateWeaponMaterial(time);
 	}
 
-	this.frustum.setFromMatrix( this.matrix.multiplyMatrices( this.projectionMatrix, this.splineCamera.matrixWorldInverse ));
-
-	this.scene.traverse((node) => {
-		if ( node instanceof THREE.Mesh ) {
-			node.visible = this.activeCameraMode !== 'fly' || this.frustum.intersectsObject(node);
-			//node.visible = node.position.distanceTo(this.splineCamera.position) < 50000;
-		}
-	});
+	if(this.trackSections) {
+		this.updateVisibleObjects(this.splineCamera);	
+	}
 
 	// Camera is in fly mode and we have a spline to follow?
 	if( this.activeCameraMode === 'fly' && this.cameraSpline ) {
@@ -100,6 +88,54 @@ Wipeout.prototype.animate = function(time) {
 		this.renderer.render( this.scene, this.camera );
 	}
 };
+
+Wipeout.prototype.nearestSection = function(position) {
+	var minDistance = 99999999;
+	var currentSection;
+
+	for(var i = 0 ; i < this.sections.length ; i++) {		
+		var section = this.sections[i];
+		var distance = position.distanceTo(new THREE.Vector3(section.x, -section.y, -section.z));
+		
+		if(distance < minDistance) {
+			minDistance = distance;
+			currentSection = i;
+		}
+	}
+
+	return currentSection;
+}
+
+Wipeout.prototype.updateVisibleObjects = function(camera) {
+
+	var currentSection = this.sections[this.nearestSection(camera.position)];
+
+	//hide all sections
+	for(var i = 0 ; i < this.trackSections.length ; i++) {
+		var section = this.trackSections[i];
+		section.visible = false;
+	}
+	
+	//near -> far (forward)
+	for(var i = 0 ; i < 3 ; i++) { 
+		
+		var viewListIndex = currentSection.viewListIndex[i];
+		var viewListLength = currentSection.viewListLength[i];
+		
+		//view lists
+		for(var k = 0 ; k < viewListLength / 2 ; k++) { 
+			var viewList = this.viewLists[viewListIndex + k];
+			
+			//view lists elements
+			for(var j = viewList.segmentFrom ; j < viewList.segmentFrom + viewList.segmentLength ; j++) { 
+				
+				var section = this.trackSections[j%this.trackSections.length];
+				section.visible = true;			
+			}
+		}
+	}
+
+}
 
 Wipeout.prototype.updateSplineCamera = function(time, deltaTime) {
 	// Framerate independent damping 
@@ -209,20 +245,34 @@ Wipeout.TrackSection = Struct.create(
 	Struct.int32('x'),
 	Struct.int32('y'),
 	Struct.int32('z'),
-	Struct.skip(116),
-	Struct.uint32('firstFace'),
+	Struct.uint16('unknown1'), //must be = 8
+	Struct.uint16('unknown2'), 
+	Struct.skip(8), //always = 0 padding ?
+	Struct.array('viewListIndex', Struct.uint32(), 5*3), //view lists for culling. contains RAM addresses to VEW files. 
+														//there is 5 lists : forward, back, left, right, all (camera). each list constains 3 index : near, medium, far
+	Struct.array('viewListLength', Struct.uint16(), 5*3), //view lists array length
+	Struct.array('unknown4', Struct.uint16(), 4*2),  //section indexes? unknown
+	Struct.uint16('firstFace'),
 	Struct.uint16('numFaces'),
-	Struct.skip(4),
+	Struct.uint16('unknown8'), //always = -1?
+	Struct.uint16('unknown9'), //always = -1?
 	Struct.uint16('flags'),
-	Struct.skip(4)
+	Struct.uint16('unknown10'),
+	Struct.skip(2) //padding
 );
-
 
 // .TEX Files ---------------------------------------------
 
 Wipeout.TrackTexture = Struct.create( 
 	Struct.uint8('tile'),
 	Struct.uint8('flags')
+);
+
+// .VEW Files ---------------------------------------------
+
+Wipeout.ViewList = Struct.create( 
+	Struct.uint16('segmentFrom'),
+	Struct.uint16('segmentLength')
 );
 
 
@@ -896,27 +946,44 @@ Wipeout.prototype.createTrack = function(files) {
 		vertices.push( new THREE.Vector3(rawVertices[i].x, -rawVertices[i].y, -rawVertices[i].z) );
 	}
 
+	//view lists
+	var viewListsCount = files.viewLists.byteLength / Wipeout.ViewList.byteLength;
+	this.viewLists = Wipeout.ViewList.readStructs(files.viewLists, 0, viewListsCount);
+
 	//track sections
 	var sectionCount = files.sections.byteLength / Wipeout.TrackSection.byteLength;
-	var sections = Wipeout.TrackSection.readStructs(files.sections, 0, sectionCount);
+	this.sections = Wipeout.TrackSection.readStructs(files.sections, 0, sectionCount);
+
+	var pos = 0;
+	for(var i = 0 ; i < sectionCount ; i++) {
+		var section = this.sections[i];
+		for(var j = 0 ; j < 3 ; j++) {
+			for(var k = 0 ; k < 5 ; k++) {
+				section.viewListIndex[j + k * 3] = pos;
+				pos += section.viewListLength[j + k * 3] / 2;
+			}
+		}
+	}
 
 	var group = new THREE.Group();
-	for(var i = 0 ; i < sections.length ; i ++) {
+	this.trackSections = [];
+	for(var i = 0 ; i < this.sections.length ; i ++) {
 		
-		var geometry = this.createTrackSection(i, faces, vertices, sections);
+		var geometry = this.createTrackSection(i, faces, vertices);
 		var mesh = new THREE.Mesh(geometry, this.trackMaterial);
 		group.add(mesh);
+		this.trackSections.push(mesh);
 	}
 	this.scene.add(group);
 
-	this.createCameraSpline(sections, faces, vertices);
+	this.createCameraSpline(this.sections, faces, vertices);
 };
 
-Wipeout.prototype.createTrackSection = function(index, faces, vertices, sections) {
+Wipeout.prototype.createTrackSection = function(index, faces, vertices) {
 	var geometry = new THREE.Geometry();
 
 	var map = new Map();
-	var section = sections[index];
+	var section = this.sections[index];
 	for(var i = section.firstFace; i < section.firstFace+section.numFaces; i++ ) {
 		var f = faces[i];
 
@@ -1063,7 +1130,8 @@ Wipeout.prototype.loadTrack = function( path, loadTEXFile ) {
 		textureIndex: path+'/LIBRARY.TTF',
 		vertices: path+'/TRACK.TRV',
 		faces: path+'/TRACK.TRF',
-		sections: path+'/TRACK.TRS'
+		sections: path+'/TRACK.TRS',
+		viewLists: path+'/TRACK.VEW'
 	};
 
 	if( loadTEXFile ) {
