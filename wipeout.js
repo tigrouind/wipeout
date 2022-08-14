@@ -115,26 +115,42 @@ Wipeout.prototype.updateVisibleObjects = function(camera) {
 		var section = this.trackSections[i];
 		section.visible = false;
 	}
-	
-	//near -> far (forward)
-	for(var i = 0 ; i < 3 ; i++) { 
 		
-		var viewListIndex = currentSection.viewListIndex[i];
-		var viewListLength = currentSection.viewListLength[i];
+	for(var n = 0 ; n < 5 ; n++) { //north, (south), west, east, (all)
+		if (n == 1 || n == 4) continue;
 		
-		//view lists
-		for(var k = 0 ; k < viewListLength / 2 ; k++) { 
-			var viewList = this.viewLists[viewListIndex + k];
+		for(var i = 0 ; i < 3 ; i++) { //near, medium, far 
 			
-			//view lists elements
-			for(var j = viewList.segmentFrom ; j < viewList.segmentFrom + viewList.segmentLength ; j++) { 
+			var viewListIndex = currentSection.viewListIndex[n * 3 + i];
+			var viewListLength = currentSection.viewListLength[n * 3 + i];
+			
+			//view lists
+			for(var k = 0 ; k < viewListLength / 2 ; k++) { 
+				var viewList = this.viewLists[viewListIndex + k];
 				
-				var section = this.trackSections[j%this.trackSections.length];
-				section.visible = true;			
+				//view lists elements
+				for(var j = viewList.segmentFrom ; j < viewList.segmentFrom + viewList.segmentLength ; j++) { 
+					
+					var section = this.trackSections[j%this.trackSections.length];
+					section.visible = true;		
+				}
 			}
 		}
 	}
-
+		
+	if (this.sceneobjects) {
+		//hide/show scene models
+		for(var i = 0; i < this.sceneobjects.length; i++ ) {
+			var model = this.sceneobjects[i];
+			
+			if (model.userData.sectionIndex == undefined) {			
+				model.userData.sectionIndex = this.nearestSection(model.position);
+			}
+			
+			var track = this.trackSections[model.userData.sectionIndex%this.trackSections.length];	
+			model.visible = track.visible;
+		}
+	}
 }
 
 Wipeout.prototype.updateSplineCamera = function(time, deltaTime) {
@@ -867,6 +883,7 @@ Wipeout.prototype.createScene = function(files, modify) {
 
 	this.sceneMaterial = this.createMeshFaceMaterial(images, THREE.VertexColors, THREE.FrontSide);
 
+	var sceneobjects = [];
 	var objects = this.readObjects(files.objects);
 	for( var i = 0; i < objects.length; i++ ) {
 		var model = this.createModelFromObject(objects[i], this.sprites);
@@ -880,7 +897,10 @@ Wipeout.prototype.createScene = function(files, modify) {
 			model.position.add({x: (i + 0.5 - objects.length/2)*modify.space, y:0, z: 0});
 		}
 		this.scene.add( model );
+		sceneobjects.push(model);
 	}
+	
+	return sceneobjects;
 };
 
 
@@ -957,8 +977,8 @@ Wipeout.prototype.createTrack = function(files) {
 	var pos = 0;
 	for(var i = 0 ; i < sectionCount ; i++) {
 		var section = this.sections[i];
-		for(var j = 0 ; j < 3 ; j++) {
-			for(var k = 0 ; k < 5 ; k++) {
+		for(var j = 0 ; j < 3 ; j++) { //near, medium, far
+			for(var k = 0 ; k < 5 ; k++) { //north, south, west, east, all
 				section.viewListIndex[j + k * 3] = pos;
 				pos += section.viewListLength[j + k * 3] / 2;
 			}
@@ -1114,10 +1134,14 @@ Wipeout.prototype.getSectionPosition = function(section, faces, vertices) {
 
 Wipeout.prototype.loadTrack = function( path, loadTEXFile ) {
 	var that = this;
+	
+	this.sceneobjects = null;
+	this.trackSections = null;
+	
 	this.loadBinaries({
 		textures: path+'/SCENE.CMP',
 		objects: path+'/SCENE.PRM'
-	}, function(files) { that.createScene(files); });
+	}, function(files) { that.sceneobjects = that.createScene(files); });
 
 	this.loadBinaries({
 		textures: path+'/SKY.CMP',
