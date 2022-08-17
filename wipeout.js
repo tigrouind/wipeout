@@ -39,7 +39,9 @@ Wipeout.prototype.clear = function() {
 	this.sceneMaterial = {};
 	this.trackMaterial = null;
 	this.weaponTileMaterial = null;
-	
+	this.renderToTexture = false;
+	this.screenTexture = new THREE.WebGLRenderTarget( 256, 256, { minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter, format: THREE.RGBFormat } );
+	this.screenMaterial = new THREE.MeshBasicMaterial({map:this.screenTexture});
 
 };
 
@@ -74,6 +76,10 @@ Wipeout.prototype.animate = function(time) {
 		this.updateSplineCamera(time, deltaTime);
 			
 		this.rotateSpritesToCamera(this.splineCamera);
+		
+		this.renderToTexture = true;
+		this.renderer.render(this.scene, this.splineCamera, this.screenTexture, false);
+		this.renderToTexture = false;
 		this.renderer.render(this.scene, this.splineCamera);
 	}
 
@@ -82,6 +88,7 @@ Wipeout.prototype.animate = function(time) {
 		this.controls.update();
 		this.animateSceneObjects(time, this.camera);
 		this.rotateSpritesToCamera(this.camera);
+		this.renderToTexture = false;
 		this.renderer.render( this.scene, this.camera );
 	}
 };
@@ -141,6 +148,7 @@ Wipeout.prototype.updateWeaponMaterial = function(time) {
 };
 
 Wipeout.prototype.animateSceneObjects = function(time, camera) {
+	var $this = this;
 	this.scene.traverse (function (object)
 	{
 		if (object instanceof THREE.Mesh)
@@ -168,6 +176,16 @@ Wipeout.prototype.animateSceneObjects = function(time, camera) {
 			else if(object.name == "zeppelin") {
 				var t = (time * 0.00007)%1.0 - 0.3;
 				object.position.setZ(t * -21000.0);
+			}
+			else if(object.name.indexOf("screen") == 0) {
+				if($this.renderToTexture) {
+					if(object.oldMaterial !== undefined)
+						object.material = object.oldMaterial;
+				}
+				else {
+					object.oldMaterial = object.material;
+					object.material = $this.screenMaterial;
+				}
 			}
 			else if(object.name.indexOf("camera") == 0) {
 				object.position.setY(Math.sin(time * 0.007) * 50.0);
