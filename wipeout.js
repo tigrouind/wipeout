@@ -136,15 +136,8 @@ Wipeout.prototype.rotateSpritesToCamera = function(camera) {
 };
 
 Wipeout.prototype.updateWeaponMaterial = function(time) {
-	// Purple -> blue -> cyan -> yellow -> amber (never 100% red or green)
-	var colors = [0x800080, 0x0000ff, 0x00ffff, 0xffff00, 0xff8000];
 	var t = time / 1050;
-	var index = Math.floor(t);
-	var alpha = t - index;
-	
-	var colorA = new THREE.Color(colors[index%colors.length]);
-	var colorB = new THREE.Color(colors[(index+1)%colors.length]);
-	this.weaponTileMaterial.color = colorA.lerp(colorB, alpha).multiplyScalar(1.5);
+	this.weaponTileMaterial.color = new THREE.Color( Math.sin(t)*0.5+0.5, Math.cos(t)*0.5+0.5, Math.sin(-t)*0.5+0.5 );
 };
 
 Wipeout.prototype.animateSceneObjects = function(time, camera) {
