@@ -108,7 +108,8 @@ Wipeout.prototype.nearestSection = function(position) {
 
 Wipeout.prototype.updateVisibleObjects = function(camera) {
 
-	var currentSection = this.sections[this.nearestSection(camera.position)];
+	var sectionIndex = this.nearestSection(camera.position);
+	var currentSection = this.sections[sectionIndex];
 
 	//hide all sections
 	for(var i = 0 ; i < this.trackSections.length ; i++) {
@@ -141,14 +142,23 @@ Wipeout.prototype.updateVisibleObjects = function(camera) {
 	if (this.sceneobjects) {
 		//hide/show scene models
 		for(var i = 0; i < this.sceneobjects.length; i++ ) {
-			var model = this.sceneobjects[i];
+			var model = this.sceneobjects[i];			
+			model.visible = false;
 			
-			if (model.userData.sectionIndex == undefined) {			
-				model.userData.sectionIndex = this.nearestSection(model.position);
+			var distance = model.position.distanceTo(new THREE.Vector3(currentSection.x, -currentSection.y, -currentSection.z));				
+			if ((distance - model.userData.extent) < 32767) {
+				
+				//for(var j = 0; j < 30 ; n++) {
+					//var section = this.sections[(sectionIndex + j)%this.sections.length];	
+					//var distance = model.position.distanceTo(new THREE.Vector3(section.x, -section.y, -section.z));				
+					//if ((distance - model.userData.extent) < 32767) {
+						model.visible = true;
+						//break;
+					//}
+				//}
 			}
 			
-			var track = this.trackSections[model.userData.sectionIndex%this.trackSections.length];	
-			model.visible = track.visible;
+			
 		}
 	}
 }
@@ -571,6 +581,7 @@ Wipeout.prototype.createModelFromObject = function(object, spriteCollection) {
 	var model = new THREE.Object3D();
 	var geometry = new THREE.Geometry();
 
+    model.userData.extent = object.header.index1;
 	model.position.set(object.header.position.x, -object.header.position.y, -object.header.position.z);
 
 	// Load vertices
@@ -977,6 +988,10 @@ Wipeout.prototype.createTrack = function(files) {
 	var pos = 0;
 	for(var i = 0 ; i < sectionCount ; i++) {
 		var section = this.sections[i];
+		
+		console.log(section.unknown8);
+		console.log(section.unknown9);
+		
 		for(var j = 0 ; j < 3 ; j++) { //near, medium, far
 			for(var k = 0 ; k < 5 ; k++) { //north, south, west, east, all
 				section.viewListIndex[j + k * 3] = pos;
